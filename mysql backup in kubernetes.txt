@@ -1,0 +1,179 @@
+একদম ঠিক! নিচে আমি তোমার জন্য সবকিছু **step by step এবং file-by-file** আকারে দিচ্ছি — যাতে তুমি একবারেই `MySQL Deployment` + `ClusterIP Service` + `ConfigMap-based Env` + `Job-based Backup` খুব সহজে চালাতে পারো ✅
+
+---
+
+## ✅ 1️⃣ `ConfigMap` — MySQL Environment Variables
+
+📄 **mysql-config.yaml**
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+data:
+  MYSQL_ROOT_PASSWORD: test123
+  MYSQL_DATABASE: sampledb
+  MYSQL_USER: admin
+  MYSQL_PASSWORD: admin123
+```
+
+---
+
+## ✅ 2️⃣ `Deployment` — MySQL App (Uses ConfigMap)
+
+📄 **mysql-deployment.yaml**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+          envFrom:
+            - configMapRef:
+                name: mysql-config
+          volumeMounts:
+            - name: mysql-storage
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: mysql-storage
+          emptyDir: {}
+```
+
+---
+
+## ✅ 3️⃣ `Service` — ClusterIP to expose MySQL internally
+
+📄 **mysql-service.yaml**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-db
+spec:
+  selector:
+    app: database
+  ports:
+    - port: 3306
+      targetPort: 3306
+  type: ClusterIP
+```
+
+> DNS name হবে: `mysql-db.default.svc.cluster.local`
+
+---
+
+## ✅ 4️⃣ `ConfigMap` — Backup Script (db\_backup.sh)
+
+📄 **backup-script-configmap.yaml**
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-backup-script
+data:
+  db_backup.sh: |
+    #!/bin/bash
+    echo "🔁 Backup initialized..."
+    mysqldump -hmysql-db.default -u$MYSQL_USER -p$MYSQL_PASSWORD $MYSQL_DATABASE > /var/tmp/mysql_backup.sql
+    echo "✅ Backup completed!"
+```
+
+---
+
+## ✅ 5️⃣ `Job` — MySQL Backup Runner
+
+📄 **backup-job.yaml**
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mysql-db-backup
+spec:
+  template:
+    spec:
+      containers:
+        - name: mysql-backup
+          image: mysql:8.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              chmod +x /scripts/db_backup.sh && /scripts/db_backup.sh
+          envFrom:
+            - configMapRef:
+                name: mysql-config
+          volumeMounts:
+            - name: backup-script
+              mountPath: /scripts
+            - name: backup-storage
+              mountPath: /var/tmp
+      restartPolicy: Never
+      volumes:
+        - name: backup-script
+          configMap:
+            name: db-backup-script
+            defaultMode: 0777
+        - name: backup-storage
+          hostPath:
+            path: /var/tmp/db_backups
+            type: DirectoryOrCreate
+```
+
+---
+
+## ✅ Apply All
+
+```bash
+kubectl apply -f mysql-config.yaml
+kubectl apply -f mysql-deployment.yaml
+kubectl apply -f mysql-service.yaml
+kubectl apply -f backup-script-configmap.yaml
+kubectl apply -f backup-job.yaml
+```
+
+---
+
+## ✅ Check Backup Result
+
+```bash
+kubectl logs job/mysql-db-backup
+```
+
+Then on the **node** (host machine):
+
+```bash
+ls /var/tmp/db_backups
+# You should see: mysql_backup.sql ✅
+```
+
+---
+
+## ✅ Want ZIP version?
+
+If you want, I can prepare all these files into a ready-to-download `.zip` — just say **"zip it"**, and I’ll give it to you instantly.
+
+Let me know if you'd like to:
+
+* Use `PersistentVolume` instead of `hostPath`
+* Convert `Job` into a `CronJob`
+* Push backup to AWS S3
+
+I'll guide you step-by-step. ✅
